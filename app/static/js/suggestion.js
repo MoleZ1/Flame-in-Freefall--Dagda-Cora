@@ -1,300 +1,307 @@
-/* Suggestions (suggestion.html)
- * Talks to the chat API:
- *   POST /api/chat/interpret  {message}                    -> {scenario, summary, problems}
- *   POST /api/chat/answer     {scenario, confirmed: true}  -> {answer, results, abstained, recommendation_id, ...}
- *   POST /api/chat/feedback   {recommendation_id, experiment_id, grade}
- * Numbers shown in the results come from the database, never from the language model.
+/* Suggestions (suggestion.html): an uploaded investigation in the context of the database.
+ *   GET  /api/investigations                    -> {investigations: [{investigation_id, title, created_at}]}
+ *   GET  /api/investigations/<id>/analysis      -> overview, affinity, ranges, scatter (numbers from the database)
+ *   POST /api/investigations/<id>/annotations   -> summary, notes, recommendations (Qwen, checked against the facts)
+ * Numbers in the charts never come from the language model.
  */
 (() => {
-  const API = { interpret: "/api/chat/interpret", answer: "/api/chat/answer", feedback: "/api/chat/feedback" };
-
-  const LABELS = {
-    pressure: "Pressure", ambient_oxygen_mole_fraction: "Ambient O₂", burner_oxygen_mole_fraction: "Burner O₂",
-    burner_fuel_mole_fraction: "Burner fuel fraction", ambient_fuel_mole_fraction: "Ambient fuel fraction",
-    fuel_mole_fraction: "Fuel fraction", fuel_mass_fraction: "Fuel mass fraction",
-    ambient_nitrogen_mole_fraction: "Ambient N₂", ambient_helium_mole_fraction: "Ambient He",
-    oxidizer_ozone_mole_fraction: "Ozone in oxidizer", fuel_mass_flow_rate: "Fuel flow", oxygen_mass_flow_rate: "O₂ flow",
-    initial_droplet_diameter: "Droplet diameter", strain_rate: "Strain rate", adiabatic_flame_temperature: "Flame temperature",
-    gravity_environment: "Gravity", ozone_addition: "Ozone", cool_flame_observed: "Cool flame",
-    hot_ignition: "Hot ignition", burn_time: "Burn time", flame_type: "Flame type", fuel: "Fuel",
-  };
-  const CATEGORY_LABELS = {
-    microgravity_iss: "Microgravity (ISS)", normal_gravity_lab: "Ground lab", simulated_microgravity: "Simulated microgravity",
-    with_ozone: "With ozone", without_ozone: "Without ozone",
-  };
-  const COMPONENT_LABELS = {
-    s_phys: "Physical conditions", s_out: "Measures what you asked", s_mat: "Same or similar fuel",
-    s_text: "Text match", s_meth: "Same setup",
-  };
-
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const human = (s) => String(s ?? "").replace(/_/g, " ");
-  const label = (v) => LABELS[v] || human(v).replace(/^./, (c) => c.toUpperCase());
-  const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { maximumFractionDigits: d });
-  const score = (x) => Number(x).toFixed(2);
+  // Up to d decimals, but never fewer than 3 significant digits (small values would otherwise show as 0).
+  const fmt = (n, d = 2) => {
+    const x = Number(n);
+    if (x !== 0 && Math.abs(x) < 1) return Number(x.toPrecision(3)).toLocaleString("en-US", { maximumFractionDigits: 12 });
+    return x.toLocaleString("en-US", { maximumFractionDigits: d });
+  };
+  const score = (x) => (x == null ? "n/a" : Number(x).toFixed(2));
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const PALETTE = ["#2563eb", "#0d9488", "#7c3aed", "#ca8a04", "#db2777", "#64748b", "#16a34a", "#9333ea"];
+  const GRAVITY = { microgravity_iss: "Microgravity (ISS)", normal_gravity_lab: "Ground lab", simulated_microgravity: "Simulation",
+                    microgravity: "Microgravity", normal_gravity: "Normal gravity" };
 
-  // Database values for the details panel: 3 significant digits, readable units and categories.
-  function pretty(value, unit) {
-    if (typeof value === "boolean") return value ? "yes" : "no";
-    if (typeof value === "number") {
-      const n = Math.abs(value) >= 1000 ? fmt(value, 0) : Number(value.toPrecision(3)).toString();
-      const u = { degC: "°C", "1": "", "mm^2/s": "mm²/s", "m^2/s": "m²/s" }[unit] ?? (unit || "");
-      return `${n} ${u}`.trim();
-    }
-    return CATEGORY_LABELS[value] || human(value);
-  }
+  let analysis = null;
+  let currentId = null;
+  const invColor = {};
 
-  let scenario = null;
-  let lastQuestion = "";
-  let recommendationId = null;
-
-  /* ------------------------------------------------------------- http */
-  async function post(url, body) {
-    let r;
-    try {
-      r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body) });
-    } catch (_) {
-      throw new Error("Could not reach the server. Check that Flask is running and try again.");
-    }
-    let data = {};
-    try { data = await r.json(); } catch (_) { /* non-JSON error page */ }
-    if (r.ok) return data;
-    if (r.status === 404) throw new Error("The suggestion service is not connected yet. Register the /api/chat routes in Flask.");
-    throw new Error(data.error || `The server returned error ${r.status}. Try again.`);
-  }
-
-  /* ---------------------------------------------------- unit display */
-  // Values from the API are in canonical units (Pa, mole fraction, kg/s, m, K, s); show friendlier ones.
+  /* --------------------------------------------------------------- units */
+  // Values arrive in canonical units (Pa, mole fraction, m, kg/s, K, s). Same conversions as before.
   function display(variable, value, unit) {
     if (value == null) return "not reported";
-    if (unit === "Pa") return `${fmt(value / 1000, 1)} kPa`;
+    if (unit === "Pa") return value >= 1e6 ? `${fmt(value / 1e6, 2)} MPa` : `${fmt(value / 1000, 1)} kPa`;
     if (unit === "1" && /fraction/.test(variable)) return `${fmt(value * 100, 1)}%`;
     if (unit === "kg/s") return `${fmt(value * 1e6, 2)} mg/s`;
     if (unit === "m") return `${fmt(value * 1000, 2)} mm`;
     return `${fmt(value, 3)} ${unit && unit !== "1" ? unit : ""}`.trim();
   }
 
-  /* ----------------------------------------------- step 1: interpret */
-  $("askForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const q = $("question").value.trim();
-    $("askMessage").textContent = "";
-    if (q.length < 10) { $("askMessage").textContent = "Describe your scenario in at least a few words."; return; }
-    const btn = $("askBtn");
-    btn.disabled = true; btn.textContent = "Interpreting…";
+  /* ---------------------------------------------------------------- http */
+  async function call(method, url, body) {
+    let r;
     try {
-      const d = await post(API.interpret, { message: q });
-      lastQuestion = q;
-      scenario = d.scenario;
-      renderScenario(d.problems || []);
-      $("resultsView").hidden = true;
-      $("confirmPanel").hidden = false;
-      $("confirmPanel").scrollIntoView({ behavior: "smooth", block: "start" });
-    } catch (err) {
-      $("askMessage").textContent = err.message;
-    } finally {
-      btn.disabled = false; btn.textContent = "Interpret";
+      r = await fetch(url, { method, headers: { "Content-Type": "application/json", Accept: "application/json" },
+                             body: body ? JSON.stringify(body) : undefined });
+    } catch (_) {
+      throw new Error("Could not reach the server. Check that Flask is running and try again.");
     }
-  });
-
-  /* ------------------------------------------------- step 2: confirm */
-  function scenarioItems() {
-    const s = scenario.structured;
-    const items = [];
-    if (s.fuel) items.push({ key: "fuel", text: `Fuel: ${human(s.fuel)}`, remove: () => { s.fuel = null; } });
-    if (s.configuration && s.configuration.flame_type) {
-      items.push({ key: "flame_type", text: `Flame type: ${s.configuration.flame_type}`, remove: () => { delete s.configuration.flame_type; } });
-    }
-    s.conditions.forEach((c) => {
-      const raw = c.raw || {};
-      let value;
-      if (c.kind === "categorical") value = CATEGORY_LABELS[c.norm.value] || human(c.norm.value);
-      else if (c.kind === "range") value = `${raw.min}–${raw.max} ${raw.unit || ""}`;
-      else value = `${raw.value} ${raw.unit || ""}`;
-      items.push({ key: c.variable, text: `${label(c.variable)}: ${value.trim()}`,
-                   remove: () => { s.conditions = s.conditions.filter((x) => x !== c); } });
-    });
-    s.outputs_of_interest.forEach((o) => {
-      items.push({ key: o, text: `Looking for: ${label(o).toLowerCase()}`,
-                   remove: () => { s.outputs_of_interest = s.outputs_of_interest.filter((x) => x !== o); } });
-    });
-    (s.hard_filters || []).forEach((f) => {
-      items.push({ key: f.variable, text: `Only ${label(f.variable).toLowerCase()}: ${f.values.map((v) => CATEGORY_LABELS[v] || human(v)).join(", ")}`,
-                   remove: () => { s.hard_filters = s.hard_filters.filter((x) => x !== f); } });
-    });
-    return items;
+    let data = {};
+    try { data = await r.json(); } catch (_) { /* non-JSON error page */ }
+    if (r.ok) return data;
+    if (r.status === 404 && !data.error) throw new Error("The investigations service is not connected. Register the /api/investigations routes in Flask.");
+    throw new Error(data.error || `The server returned error ${r.status}. Try again.`);
   }
 
-  function renderScenario(problems) {
-    const items = scenarioItems();
-    const ul = $("scenarioChips");
-    ul.innerHTML = "";
-    if (!items.length) {
-      ul.innerHTML = '<li class="muted-text">No conditions were recognized. Edit your question and add pressure, oxygen, fuel or gravity.</li>';
-    }
-    items.forEach((it) => {
-      const li = document.createElement("li");
-      li.className = "chip";
-      li.innerHTML = `${esc(it.text)}<button type="button" aria-label="Remove ${esc(it.text)}">×</button>`;
-      li.querySelector("button").onclick = () => { it.remove(); renderScenario([]); };
-      ul.appendChild(li);
-    });
-    const notes = problems.concat((scenario.unmapped || []).map((u) => `Not recognized: “${u}”`));
-    $("scenarioProblems").hidden = !notes.length;
-    $("scenarioProblems").textContent = notes.join(" ");
-    $("searchBtn").disabled = !items.length;
-  }
-
-  $("editBtn").addEventListener("click", () => {
-    $("confirmPanel").hidden = true;
-    $("question").value = lastQuestion;
-    $("question").focus();
-  });
-
-  /* -------------------------------------------------- step 3: search */
-  $("searchBtn").addEventListener("click", async () => {
-    const btn = $("searchBtn");
-    $("searchMessage").textContent = "";
-    btn.disabled = true; btn.textContent = "Searching…";
+  /* -------------------------------------------------------------- picker */
+  async function init() {
+    const sel = $("invSelect");
+    let list = [];
     try {
-      const d = await post(API.answer, { scenario, confirmed: true });
-      recommendationId = d.recommendation_id;
-      renderAnswer(d);
-      renderResults(d);
-      $("resultsView").hidden = false;
-      $("resultsView").scrollIntoView({ behavior: "smooth", block: "start" });
+      list = (await call("GET", "/api/investigations")).investigations || [];
     } catch (err) {
-      $("searchMessage").textContent = err.message;
-    } finally {
-      btn.disabled = false; btn.textContent = "Search experiments";
+      $("pickMessage").textContent = err.message;
+      sel.innerHTML = '<option value="">Unavailable</option>';
+      return;
     }
-  });
-
-  function citationChips(ids, rankOf) {
-    return ids.map((id) => {
-      if (rankOf[id]) return `<a class="cite" href="#res-${rankOf[id]}" title="${esc(id)}">#${rankOf[id]}</a>`;
-      const kind = id.startsWith("FND:") ? "Finding" : id.startsWith("CHK:") ? "Report" : "Source";
-      return `<span class="cite" title="${esc(id)}">${kind}</span>`;
-    }).join(" ");
+    if (!list.length) {
+      sel.innerHTML = '<option value="">None yet</option>';
+      $("emptyState").hidden = false;
+      return;
+    }
+    sel.innerHTML = list.map((x) => `<option value="${esc(x.investigation_id)}">${esc(x.investigation_id)}: ${esc(x.title || "")}</option>`).join("");
+    sel.disabled = false;
+    const wanted = new URLSearchParams(location.search).get("investigation");
+    sel.value = list.some((x) => x.investigation_id === wanted) ? wanted : list[0].investigation_id;
+    sel.addEventListener("change", () => load(sel.value));
+    load(sel.value);
   }
 
-  function renderAnswer(d) {
-    const a = d.answer || {};
-    const rankOf = {};
-    (d.results || []).forEach((r) => { rankOf[r.experiment_id] = r.rank; });
-    const claims = (list) => (list || [])
-      .filter((c) => c.supported !== false && c.citations && c.citations.length)
-      .map((c) => `<li>${esc(c.statement)} ${citationChips(c.citations, rankOf)}</li>`).join("");
-    const evidence = claims(a.evidence);
-    const interpretation = claims(a.interpretation);
-    const dropped = (a.evidence || []).filter((c) => c.supported === false).length;
-    const limits = (a.limitations || []).map((l) => `<li>${esc(l)}</li>`).join("");
-
-    $("answerPanel").classList.toggle("is-abstained", !!d.abstained);
-    $("answerBody").innerHTML = `
-      <p class="answer-summary">${esc(a.summary || "")}</p>
-      ${evidence ? `<h3>Evidence</h3><ul class="claim-list">${evidence}</ul>` : ""}
-      ${interpretation ? `<h3>What it suggests</h3><ul class="claim-list">${interpretation}</ul>` : ""}
-      ${limits || dropped ? `<details class="limits"><summary>Limitations</summary><ul>${limits}${
-        dropped ? `<li>${dropped} ${dropped === 1 ? "statement was" : "statements were"} removed because ${dropped === 1 ? "it was" : "they were"} not backed by the cited sources.</li>` : ""}</ul></details>` : ""}`;
+  async function load(id) {
+    currentId = id;
+    $("pickMessage").textContent = "";
+    history.replaceState(null, "", `?investigation=${encodeURIComponent(id)}`);
+    $("view").hidden = true;
+    try {
+      const a = await call("GET", `/api/investigations/${encodeURIComponent(id)}/analysis`);
+      if (id !== currentId) return;
+      analysis = a;
+      (a.affinity || []).forEach((x, i) => { invColor[x.investigation_id] = PALETTE[i % PALETTE.length]; });
+      renderOverview(a.overview);
+      renderAffinity(a.affinity || []);
+      renderRanges(a.ranges || []);
+      setupScatter(a.scatter);
+      const foot = [];
+      if ((a.provisional_tolerances || []).length) foot.push(`Similarity tolerances are provisional for ${a.provisional_tolerances.join(", ")} until a domain expert sets them.`);
+      if (a.semantic_backend === "tfidf") foot.push("Meaning-based affinity is using word matching only (embeddings not configured).");
+      $("pageFoot").textContent = foot.join(" ");
+      $("view").hidden = false;
+      loadNotes(id, false);
+    } catch (err) {
+      $("pickMessage").textContent = err.message;
+    }
   }
 
-  /* ----------------------------------------------------------- results */
-  function tags(r) {
-    const out = [];
-    if (r.data_origin === "simulation") out.push("Simulation");
-    if (r.flags.some((f) => f.startsWith("extrapolation:"))) out.push("Outside tested range");
-    if (r.flags.some((f) => f.startsWith("different:gravity"))) out.push("Different gravity");
-    const missing = r.flags.filter((f) => f.startsWith("cannot_verify:")).map((f) => label(f.split(":")[1]).toLowerCase());
-    if (missing.length) out.push(`No ${missing.join(", ")}`);
-    if (r.flags.some((f) => f.startsWith("data_quality:"))) out.push("Data under review");
-    return out.slice(0, 3);
+  /* ------------------------------------------------------------ overview */
+  function renderOverview(o) {
+    $("ovId").textContent = `${o.investigation_id} · User upload`;
+    $("ovTitle").textContent = o.title || o.investigation_id;
+    const facts = [
+      ["Fuel", o.fuel ? o.fuel.replace(/_/g, " ") : "not recognized"],
+      ["Environment", GRAVITY[o.gravity_environment] || (o.gravity_environment ? o.gravity_environment.replace(/_/g, " ") : "not specified")],
+      ["Experiments read", o.experiments],
+      ["Variables", (o.variables || []).join(", ") || "none recognized"],
+    ];
+    if (o.doi) facts.push(["Publication", o.doi]);
+    $("ovFacts").innerHTML = facts.map(([k, v]) => `<li><span class="muted-text">${esc(k)}</span> <strong>${esc(v)}</strong></li>`).join("");
+    $("ovDesc").textContent = o.description || "";
+    $("ovKeywords").innerHTML = (o.keywords || []).map((k) => `<li class="chip">${esc(k)}</li>`).join("");
+    const files = o.files || [];
+    $("ovFilesSummary").textContent = `${files.length} ${files.length === 1 ? "file" : "files"}`;
+    $("ovFiles").innerHTML = files.map((f) => `<li>${esc(f.name)} <span class="muted-text">${esc((f.role || "").replace(/_/g, " "))}</span></li>`).join("");
+    const warn = (o.warnings || []).concat((o.unmapped_columns || []).length ? [`Columns not recognized: ${o.unmapped_columns.join("; ")}.`] : []);
+    $("ovWarnings").hidden = !warn.length;
+    $("ovWarnings").textContent = warn.join(" ");
   }
 
-  function matchLines(r) {
-    return (r.variable_scores || []).filter((v) => v.status !== "not_applicable").map((v) => {
-      if (v.status !== "reported") return `<li><span>${esc(label(v.variable))}</span><span class="muted-text">not reported</span></li>`;
-      if (v.experiment_value == null) return `<li><span>${esc(label(v.variable))}</span><span>${v.s_v === 1 ? "matches" : "differs"}</span></li>`;
-      return `<li><span>${esc(label(v.variable))}</span><span>${esc(display(v.variable, v.experiment_value, v.unit))}
-        <span class="muted-text">(you: ${esc(display(v.variable, v.scenario_value, v.unit))})</span></span></li>`;
-    }).join("");
+  /* ---------------------------------------------------------- annotations */
+  function cites(ids) {
+    return (ids || []).map((id) => `<span class="cite" title="${esc(id)}">${esc(id)}</span>`).join(" ");
   }
 
-  function details(r) {
-    const comps = (r.components || []).map((c) => `
-      <li><span>${esc(COMPONENT_LABELS[c.name] || c.name)}</span>
-        ${c.observed ? `<span class="mini-bar" aria-hidden="true"><span style="width:${Math.round((c.score || 0) * 100)}%"></span></span>
-          <span class="num">${score(c.score || 0)}</span>` : '<span class="muted-text">not available</span>'}</li>`).join("");
-    const list = (items) => items.map((i) => `<li><span>${esc(i.label)}</span><span>${i.approximate ? "~" : ""}${esc(pretty(i.value, i.unit))}</span></li>`).join("");
-    const pct = (x) => (x == null ? "n/a" : `${Math.round(x * 100)}%`);
-    return `
-      <div class="detail-grid">
-        <div>
-          <h4>Why it ranks here</h4>
-          <ul class="kv comp-list">${comps}</ul>
-          <ul class="kv">
-            <li><span>Inside the tested range</span><span>${pct(r.T)}</span></li>
-            <li><span>Documentation quality</span><span>${pct(r.Q)}</span></li>
-            <li><span>Score uncertainty</span><span>${pct(r.U)}</span></li>
-          </ul>
+  async function loadNotes(id, refresh) {
+    const box = document.querySelector(".ins-notes");
+    box.setAttribute("aria-busy", "true");
+    $("annStatus").textContent = "Writing…";
+    $("annStatus").className = "tag";
+    $("annSummary").textContent = "The assistant is reading the comparison. This can take 10 to 30 seconds.";
+    $("annNotes").innerHTML = ""; $("annRecs").innerHTML = ""; $("annFoot").textContent = "";
+    $("annRefresh").hidden = true;
+    try {
+      const n = await call("POST", `/api/investigations/${encodeURIComponent(id)}/annotations`, { refresh });
+      if (id !== currentId) return;
+      $("annSummary").textContent = n.summary || "";
+      $("annNotes").innerHTML = (n.notes || []).map((x) => `
+        <li><span class="ins-note-var">${esc(x.label || x.variable)}</span>
+            <span>${esc(x.note)} ${cites(x.citations)}</span></li>`).join("") || '<li class="muted-text">No variables to annotate.</li>';
+      $("annRecs").innerHTML = (n.recommendations || []).map((x) => `
+        <li><strong>${esc(x.title)}</strong> <span>${esc(x.detail)}</span> ${cites(x.citations)}</li>`).join("") || '<li class="muted-text">No recommendations.</li>';
+      const foot = [n.source === "qwen" ? "Written by the assistant and checked against the database." : "Built directly from the database (the assistant was not available)."];
+      if (n.removed_statements) foot.push(`${n.removed_statements} ${n.removed_statements === 1 ? "statement was" : "statements were"} removed because ${n.removed_statements === 1 ? "it was" : "they were"} not backed by the data.`);
+      if (n.cached) foot.push("Saved earlier.");
+      $("annFoot").textContent = foot.join(" ");
+      $("annStatus").textContent = n.source === "qwen" ? "Checked" : "From data";
+      $("annStatus").className = "tag ins-tag-ok";
+      $("annRefresh").hidden = false;
+    } catch (err) {
+      $("annSummary").textContent = err.message;
+      $("annStatus").textContent = "Error";
+      $("annRefresh").hidden = false;
+    } finally {
+      box.setAttribute("aria-busy", "false");
+    }
+  }
+  $("annRefresh").addEventListener("click", () => currentId && loadNotes(currentId, true));
+
+  /* ------------------------------------------------------------- affinity */
+  function renderAffinity(list) {
+    const rows = list.filter((x) => x.total != null).slice(0, 8);
+    $("affChart").innerHTML = rows.length ? rows.map((x) => `
+      <li class="ins-aff-row">
+        <div class="ins-aff-label">
+          <span class="ins-dot" style="background:${invColor[x.investigation_id]}"></span>
+          <strong>${esc(x.investigation_id)}</strong>
+          <span class="muted-text ins-trunc" title="${esc(x.title || "")}">${esc(x.acronym || x.title || "")}</span>
+          ${x.user_upload ? '<span class="tag">User upload</span>' : ""}
         </div>
-        <div>
-          <h4>Recorded conditions</h4>
-          <ul class="kv">${list(r.conditions || [])}</ul>
-          ${(r.outcomes || []).length ? `<h4>Outcomes</h4><ul class="kv">${list(r.outcomes)}</ul>` : ""}
-          ${(r.measurements || []).length ? `<h4>Measurements</h4><ul class="kv">${list(r.measurements)}</ul>` : ""}
+        <div class="ins-aff-bar" role="img" aria-label="Affinity ${score(x.total)} of 1">
+          <span class="ins-level-${esc(x.level)}" style="width:${Math.round((x.total || 0) * 100)}%"></span>
         </div>
-      </div>
-      <div class="rate" role="group" aria-label="Rate the relevance of ${esc(r.experiment_id)}">
-        <span class="muted-text">How relevant is this experiment?</span>
-        ${[0, 1, 2, 3].map((g) => `<button type="button" class="rate-btn" data-grade="${g}" title="${["Not relevant", "Slightly", "Relevant", "Very relevant"][g]}">${g}</button>`).join("")}
-      </div>`;
+        <div class="ins-aff-num"><span class="num">${score(x.total)}</span> <span class="muted-text">${esc(x.level)}</span></div>
+        <p class="muted-text ins-aff-why">Conditions ${score(x.numeric)} · Meaning ${score(x.semantic)}${
+          (x.reasons || []).length ? " · " + x.reasons.map(esc).join(" · ") : ""}</p>
+      </li>`).join("") : '<li class="muted-text">No investigation could be compared.</li>';
   }
 
-  function renderResults(d) {
-    const results = d.results || [];
-    $("resultsTitle").textContent = d.abstained ? "Nearest records (not comparable)" : "Closest experiments";
-    $("resultList").innerHTML = results.length ? results.map((r) => `
-      <li class="result" id="res-${r.rank}">
-        <div class="result-head">
-          <span class="rank">${r.rank}</span>
-          <div class="result-main">
-            <p class="result-id">${esc(r.experiment_id)}</p>
-            <p class="muted-text">${esc(human(r.fuel || "fuel not reported"))}, ${r.data_origin === "simulation" ? "simulated" : "measured"}${
-              tags(r).map((t) => ` <span class="tag">${esc(t)}</span>`).join("")}</p>
-          </div>
-          <div class="relevance" title="Relevance ${score(r.R)} of 1">
-            <span class="relevance-bar" aria-hidden="true"><span style="width:${Math.round(r.R * 100)}%"></span></span>
-            <span class="num">${score(r.R)}</span>
-          </div>
-        </div>
-        <ul class="kv match-list">${matchLines(r)}</ul>
-        <details class="result-more"><summary>Details</summary>${details(r)}</details>
-      </li>`).join("") : '<li class="muted-text">No experiments matched these conditions.</li>';
+  /* --------------------------------------------------------------- ranges */
+  // values: every value the axis must show. On a log axis, zero or negative values are pinned to the smallest positive one.
+  function scaler(values, log, a, b) {
+    const f = log ? Math.log10 : (v) => v;
+    const pos = values.filter((v) => v > 0);
+    const floor = log && pos.length ? Math.min(...pos) : 1e-12;
+    const lo = log ? floor : Math.min(...values), hi = Math.max(...values, log ? floor : -Infinity);
+    let L = f(lo), H = f(hi);
+    if (H - L < 1e-12) { L -= 0.5; H += 0.5; }
+    const pad = (H - L) * 0.05; L -= pad; H += pad;
+    const s = (v) => a + ((f(log ? Math.max(v, floor) : v) - L) / (H - L)) * (b - a);
+    s.inv = (p) => { const t = L + ((p - a) / (b - a)) * (H - L); return log ? 10 ** t : t; };
+    return s;
+  }
 
-    document.querySelectorAll(".rate").forEach((group) => {
-      const expId = group.closest(".result").querySelector(".result-id").textContent;
-      group.querySelectorAll(".rate-btn").forEach((b) => b.addEventListener("click", async () => {
-        try {
-          await post(API.feedback, { recommendation_id: recommendationId, experiment_id: expId, grade: Number(b.dataset.grade) });
-          group.innerHTML = `<span class="muted-text">Thanks. Rated ${b.dataset.grade} of 3.</span>`;
-        } catch (err) {
-          group.insertAdjacentHTML("beforeend", `<span class="warn-text">${esc(err.message)}</span>`);
-        }
-      }));
+  function svg(w, h, cls) {
+    const el = document.createElementNS(SVGNS, "svg");
+    el.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    el.setAttribute("class", cls);
+    el.setAttribute("role", "img");
+    return el;
+  }
+
+  function renderRanges(ranges) {
+    const box = $("rangeChart");
+    box.innerHTML = "";
+    if (!ranges.length) { box.innerHTML = '<p class="muted-text">No numeric variables were recognized in your files.</p>'; return; }
+    ranges.forEach((rg) => {
+      const rows = [{ label: "You", min: rg.yours.min, max: rg.yours.max, you: true }]
+        .concat(rg.investigations.map((x) => ({ label: x.investigation_id, min: x.min, max: x.max, status: x.status, n: x.n })));
+      const W = 640, left = 92, right = 24, rowH = 22, top = 8, H = top + rows.length * rowH + 30;
+      const all = rows.flatMap((r) => [r.min, r.max]);
+      const sx = scaler(all, rg.log, left, W - right);
+      const el = svg(W, H, "ins-range-svg");
+      el.setAttribute("aria-label", `${rg.label}: your range compared with tested ranges`);
+      let html = "";
+      rows.forEach((r, i) => {
+        const y = top + i * rowH + rowH / 2;
+        const x1 = sx(r.min), x2 = Math.max(sx(r.max), x1 + 3);
+        const color = r.you ? "var(--ins-you)" : invColor[r.label] || "var(--ins-muted)";
+        html += `<text x="${left - 8}" y="${y + 4}" text-anchor="end" class="ins-svg-label">${esc(r.label)}</text>`;
+        html += `<line x1="${left}" x2="${W - right}" y1="${y}" y2="${y}" class="ins-svg-track"/>`;
+        html += `<rect x="${x1}" y="${y - 6}" width="${x2 - x1}" height="12" rx="3" fill="${color}" opacity="${r.you ? 1 : 0.75}">
+                   <title>${esc(r.label)}: ${esc(display(rg.variable, r.min, rg.unit))} to ${esc(display(rg.variable, r.max, rg.unit))}${
+                     r.status ? ` (yours is ${r.status})` : ""}${r.n ? `, ${r.n} experiments` : ""}</title></rect>`;
+      });
+      const yAxis = top + rows.length * rowH + 6;
+      [0, 0.5, 1].forEach((t) => {
+        const px = left + t * (W - right - left);
+        html += `<text x="${px}" y="${yAxis + 14}" text-anchor="${t === 0 ? "start" : t === 1 ? "end" : "middle"}" class="ins-svg-tick">${esc(display(rg.variable, sx.inv(px), rg.unit))}</text>`;
+      });
+      el.innerHTML = html;
+      const fig = document.createElement("figure");
+      fig.className = "ins-range";
+      const youStatus = rg.investigations.length ? "" : " · not measured by any other investigation";
+      fig.innerHTML = `<figcaption><strong>${esc(rg.label)}</strong> <span class="muted-text">yours: ${esc(display(rg.variable, rg.yours.min, rg.unit))}${
+        rg.yours.max !== rg.yours.min ? ` to ${esc(display(rg.variable, rg.yours.max, rg.unit))}` : ""}${rg.log ? " · log scale" : ""}${youStatus}</span></figcaption>`;
+      fig.appendChild(el);
+      box.appendChild(fig);
     });
-
-    const provisional = results.some((r) => r.flags.includes("provisional_sigma"));
-    $("resultsFoot").textContent =
-      `${d.candidates_considered || 0} candidates considered.` +
-      (provisional ? " Similarity tolerances are provisional until a domain expert sets them." : "");
   }
 
-  /* --------------------------------------------- prefill from dashboard */
-  const params = new URLSearchParams(location.search);
-  const p = params.get("pressure_kpa"), o2 = params.get("o2_pct");
-  if (p && o2) {
-    $("question").value = `What happens to a fire in a habitat atmosphere at ${p} kPa with ${o2}% oxygen?`;
+  /* -------------------------------------------------------------- scatter */
+  function setupScatter(sc) {
+    const vars = (sc && sc.variables) || [];
+    const xs = $("xVar"), ys = $("yVar");
+    if (vars.length < 2) {
+      xs.innerHTML = ys.innerHTML = "";
+      xs.disabled = ys.disabled = true;
+      $("scatter").innerHTML = '<p class="muted-text">At least two numeric variables are needed for this chart.</p>';
+      $("scatterLegend").innerHTML = ""; $("scatterFoot").textContent = "";
+      return;
+    }
+    const opts = vars.map((v) => `<option value="${esc(v.variable)}">${esc(v.label)}</option>`).join("");
+    xs.innerHTML = ys.innerHTML = opts;
+    xs.disabled = ys.disabled = false;
+    xs.value = sc.default[0]; ys.value = sc.default[1];
+    xs.onchange = ys.onchange = () => drawScatter(sc);
+    drawScatter(sc);
   }
+
+  function drawScatter(sc) {
+    const xv = $("xVar").value, yv = $("yVar").value;
+    const meta = Object.fromEntries(sc.variables.map((v) => [v.variable, v]));
+    const box = $("scatter");
+    if (xv === yv) { box.innerHTML = '<p class="muted-text">Choose two different variables.</p>'; return; }
+    const db = sc.database.filter((p) => p.v[xv] != null && p.v[yv] != null);
+    const mine = sc.yours.filter((p) => p.v[xv] != null && p.v[yv] != null);
+    const all = db.concat(mine);
+    if (!all.length) { box.innerHTML = '<p class="muted-text">No experiments report both variables.</p>'; return; }
+    const W = 640, H = 400, L = 70, R = 16, T = 12, B = 46;
+    const X = all.map((p) => p.v[xv]), Y = all.map((p) => p.v[yv]);
+    const sx = scaler(X, meta[xv].log, L, W - R);
+    const sy = scaler(Y, meta[yv].log, H - B, T);
+    const el = svg(W, H, "ins-scatter-svg");
+    el.setAttribute("aria-label", `${meta[xv].label} versus ${meta[yv].label}`);
+    let html = "";
+    for (let i = 0; i <= 4; i++) {
+      const px = L + (i / 4) * (W - R - L), py = (H - B) - (i / 4) * (H - B - T);
+      html += `<line x1="${px}" x2="${px}" y1="${T}" y2="${H - B}" class="ins-svg-grid"/>`;
+      html += `<line x1="${L}" x2="${W - R}" y1="${py}" y2="${py}" class="ins-svg-grid"/>`;
+      html += `<text x="${px}" y="${H - B + 16}" text-anchor="middle" class="ins-svg-tick">${esc(display(xv, sx.inv(px), meta[xv].unit))}</text>`;
+      html += `<text x="${L - 6}" y="${py + 4}" text-anchor="end" class="ins-svg-tick">${esc(display(yv, sy.inv(py), meta[yv].unit))}</text>`;
+    }
+    html += `<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle" class="ins-svg-label">${esc(meta[xv].label)}${meta[xv].log ? " (log)" : ""}</text>`;
+    html += `<text transform="translate(14 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle" class="ins-svg-label">${esc(meta[yv].label)}${meta[yv].log ? " (log)" : ""}</text>`;
+    db.forEach((p) => {
+      html += `<circle cx="${sx(p.v[xv]).toFixed(1)}" cy="${sy(p.v[yv]).toFixed(1)}" r="3.5" fill="${invColor[p.inv] || "var(--ins-muted)"}" opacity="0.55">
+                 <title>${esc(p.id)}: ${esc(display(xv, p.v[xv], meta[xv].unit))}, ${esc(display(yv, p.v[yv], meta[yv].unit))}</title></circle>`;
+    });
+    mine.forEach((p) => {
+      html += `<circle cx="${sx(p.v[xv]).toFixed(1)}" cy="${sy(p.v[yv]).toFixed(1)}" r="6" class="ins-you-pt">
+                 <title>Yours, ${esc(p.id)}: ${esc(display(xv, p.v[xv], meta[xv].unit))}, ${esc(display(yv, p.v[yv], meta[yv].unit))}</title></circle>`;
+    });
+    el.innerHTML = html;
+    box.innerHTML = "";
+    box.appendChild(el);
+    const invs = [...new Set(db.map((p) => p.inv))];
+    $("scatterLegend").innerHTML = `<li><span class="ins-dot ins-dot-you"></span>Your data (${mine.length})</li>` +
+      invs.map((i) => `<li><span class="ins-dot" style="background:${invColor[i] || "var(--ins-muted)"}"></span>${esc(i)} (${db.filter((p) => p.inv === i).length})</li>`).join("");
+    $("scatterFoot").textContent = mine.length ? "" : "Your files do not report both of these variables in the same row.";
+  }
+
+  init();
 })();

@@ -140,7 +140,7 @@
     const open = li.querySelector(".preview");
     if (open) { open.remove(); btn.textContent = "Preview first rows"; btn.setAttribute("aria-expanded", "false"); return; }
     const text = await item.file.slice(0, 64 * 1024).text();
-    const rows = parseCsvLines(text.replace(/^﻿/, ""), 6);
+    const rows = parseCsvLines(text.replace(/^/, ""), 6);
     const div = document.createElement("div");
     div.className = "preview";
     if (!rows.length) {
@@ -248,12 +248,17 @@
   });
 
   function showDone(body) {
+    const status = { added: "Added to the database", needs_review: "Pending review" }[body.status] || body.status || "Saved";
     const rows = [
       ["Title", $("title").value.trim()],
-      ["ID", body.investigation_id || $("investigation_id").value.trim() || "Assigned during review"],
+      ["ID", body.investigation_id || $("investigation_id").value.trim() || "Assigned automatically"],
       ["Documents", `${files.length}`],
-      ["Status", body.status === "needs_review" || !body.status ? "Pending review" : body.status],
+      ["Experiments read", `${body.experiments ?? 0}`],
+      ["Status", status],
     ];
+    if ((body.unmapped_columns || []).length) rows.push(["Columns not recognized", body.unmapped_columns.join("; ")]);
+    if ((body.warnings || []).length) rows.push(["Notes", body.warnings.join(" ")]);
+    $("viewBtn").href = body.url || "/suggestion";
     $("doneDetails").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
     $("formView").hidden = true;
     $("doneView").hidden = false;

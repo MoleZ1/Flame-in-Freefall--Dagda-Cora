@@ -2,77 +2,128 @@
 <html lang="en">
 
 <head>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Suggestions | PSI Scientific Advisor</title>
-	<link rel="preconnect" href="https://fonts.googleapis.com">
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap"
-		rel="stylesheet">
-	<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-	<script src="{{ url_for('static', filename='js/suggestion.js') }}" defer></script>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Suggestions | PSI Scientific Advisor</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap"
+                rel="stylesheet">
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/suggestion.css') }}">
+        <script src="{{ url_for('static', filename='js/suggestion.js') }}" defer></script>
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/assistant.css') }}">
+        <script src="{{ url_for('static', filename='js/assistant.js') }}" defer></script>
 </head>
 
-<body class="suggest-page">
+<body class="suggest-page insight-page">
 
-	<nav class="site-nav" aria-label="Main">
-		<a class="brand" href="/">PSI Scientific Advisor</a>
-		<ul>
-			<li><a href="/">Home</a></li>
-			<li><a href="/suggestion" aria-current="page">Suggestions</a></li>
-			<li><a href="/insertion">Add investigation</a></li>
-		</ul>
-	</nav>
+        <nav class="site-nav" aria-label="Main">
+                <a class="brand" href="/">PSI Scientific Advisor</a>
+                <ul>
+                        <li><a href="/">Home</a></li>
+                        <li><a href="/suggestion" aria-current="page">Suggestions</a></li>
+                        <li><a href="/insertion">Add investigation</a></li>
+                </ul>
+        </nav>
 
-	<main id="main" class="suggest">
-		<header class="page-head">
-			<h1>Find comparable experiments</h1>
-			<p>Describe the situation you care about. We match it against tested conditions and explain what the closest
-				experiments found.</p>
-		</header>
+        <main id="main" class="suggest">
+                <header class="page-head">
+                        <h1>Your investigation in context</h1>
+                        <p>See how an uploaded investigation relates to the NASA PSI database: which studies it resembles, whether
+                                its conditions were tested before, and what the assistant suggests next. Every number comes from the
+                                database.</p>
+                </header>
 
-		<!-- Step 1: question -->
-		<form class="panel ask" id="askForm" novalidate>
-			<label for="question" class="ask-label">Your scenario</label>
-			<textarea id="question" rows="3" maxlength="1500"
-				placeholder="e.g. Will n-butane form cool flames at 2 bar with 39% oxygen in microgravity?"></textarea>
-			<div class="ask-actions">
-				<p class="muted-text">Include fuel, pressure, oxygen level or gravity if you know them.</p>
-				<button type="submit" class="btn btn-primary" id="askBtn">Interpret</button>
-			</div>
-			<p class="form-message" id="askMessage" role="alert"></p>
-		</form>
+                <!-- Picker -->
+                <section class="panel ins-picker" aria-label="Choose an investigation">
+                        <label for="invSelect" class="ask-label">Investigation</label>
+                        <div class="ins-picker-row">
+                                <select id="invSelect" disabled>
+                                        <option value="">Loading…</option>
+                                </select>
+                                <a class="btn btn-ghost" href="/insertion">Add investigation</a>
+                        </div>
+                        <p class="form-message" id="pickMessage" role="alert"></p>
+                </section>
 
-		<!-- Step 2: confirm what was understood -->
-		<section class="panel confirm" id="confirmPanel" hidden aria-labelledby="h-confirm">
-			<h2 id="h-confirm">Is this what you meant?</h2>
-			<p class="muted-text">Remove anything that is wrong, or edit your question.</p>
-			<ul class="chips-list" id="scenarioChips"></ul>
-			<p class="muted-text warn-text" id="scenarioProblems" hidden></p>
-			<div class="confirm-actions">
-				<button type="button" class="btn btn-primary" id="searchBtn">Search experiments</button>
-				<button type="button" class="btn btn-ghost" id="editBtn">Edit question</button>
-			</div>
-			<p class="form-message" id="searchMessage" role="alert"></p>
-		</section>
+                <!-- Empty state -->
+                <section class="panel ins-empty" id="emptyState" hidden>
+                        <h2>No uploaded investigations yet</h2>
+                        <p class="muted-text">Add one with its data files and a description, then come back here.</p>
+                        <a class="btn btn-primary" href="/insertion">Add investigation</a>
+                </section>
 
-		<!-- Step 3: results -->
-		<section id="resultsView" hidden aria-labelledby="h-answer">
-			<article class="panel answer" id="answerPanel">
-				<h2 id="h-answer">What the data says</h2>
-				<div id="answerBody"></div>
-			</article>
+                <div id="view" hidden>
+                        <!-- Overview -->
+                        <section class="panel ins-overview" aria-labelledby="ovTitle">
+                                <p class="ins-eyebrow" id="ovId"></p>
+                                <h2 id="ovTitle"></h2>
+                                <ul class="ins-facts" id="ovFacts"></ul>
+                                <p id="ovDesc" class="ins-desc"></p>
+                                <ul class="chips-list" id="ovKeywords"></ul>
+                                <details class="ins-files">
+                                        <summary id="ovFilesSummary">Files</summary>
+                                        <ul id="ovFiles"></ul>
+                                </details>
+                                <p class="muted-text warn-text" id="ovWarnings" hidden></p>
+                        </section>
 
-			<h2 class="results-title" id="resultsTitle">Closest experiments</h2>
-			<ol class="result-list" id="resultList"></ol>
-			<p class="muted-text results-foot" id="resultsFoot"></p>
-		</section>
-	</main>
+                        <!-- Annotations (Qwen, checked) -->
+                        <section class="panel ins-notes" aria-labelledby="h-notes" aria-busy="true">
+                                <div class="ins-head">
+                                        <h2 id="h-notes">What the assistant notes</h2>
+                                        <span class="tag" id="annStatus">Writing…</span>
+                                </div>
+                                <p class="answer-summary" id="annSummary"></p>
+                                <h3>By variable</h3>
+                                <ul class="ins-note-list" id="annNotes"></ul>
+                                <h3>Recommendations</h3>
+                                <ol class="ins-rec-list" id="annRecs"></ol>
+                                <div class="ins-foot">
+                                        <p class="muted-text" id="annFoot"></p>
+                                        <button type="button" class="btn btn-ghost" id="annRefresh" hidden>Write again</button>
+                                </div>
+                        </section>
 
-	<footer class="site-foot">
-		<p>NASA Space Apps Challenge 2026: Flame in Freefall. Data from NASA Physical Sciences Informatics. Results describe
-			tested conditions, not safety certifications.</p>
-	</footer>
+                        <!-- Affinity -->
+                        <section class="panel" aria-labelledby="h-aff">
+                                <h2 id="h-aff">Affinity with the database</h2>
+                                <p class="panel-intro">How related your investigation is to each one in the database (0 to 1). It combines
+                                        conditions (numbers) and meaning (description and documents).</p>
+                                <ol class="ins-aff" id="affChart"></ol>
+                        </section>
+
+                        <!-- Ranges -->
+                        <section class="panel" aria-labelledby="h-rng">
+                                <h2 id="h-rng">Your ranges vs. tested ranges</h2>
+                                <p class="panel-intro">For each variable in your data, the range you uploaded (orange) next to the range
+                                        each investigation tested.</p>
+                                <div id="rangeChart" class="ins-ranges"></div>
+                        </section>
+
+                        <!-- Scatter -->
+                        <section class="panel" aria-labelledby="h-sc">
+                                <div class="ins-head">
+                                        <h2 id="h-sc">Your points among the experiments</h2>
+                                        <div class="ins-axes">
+                                                <label>X <select id="xVar"></select></label>
+                                                <label>Y <select id="yVar"></select></label>
+                                        </div>
+                                </div>
+                                <div id="scatter" class="ins-scatter"></div>
+                                <ul class="ins-legend" id="scatterLegend"></ul>
+                                <p class="muted-text" id="scatterFoot"></p>
+                        </section>
+
+                        <p class="muted-text results-foot" id="pageFoot"></p>
+                </div>
+        </main>
+
+        <footer class="site-foot">
+                <p>NASA Space Apps Challenge 2026: Flame in Freefall. Data from NASA Physical Sciences Informatics. Results describe
+                        tested conditions, not safety certifications.</p>
+        </footer>
 
 </body>
 
