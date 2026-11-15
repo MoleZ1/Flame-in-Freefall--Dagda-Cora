@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Add an investigation | PSI Scientific Advisor</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap"
+		rel="stylesheet">
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+
+<body>
+
+	<nav class="site-nav" aria-label="Main">
+		<a class="brand" href="/">PSI Scientific Advisor</a>
+		<ul>
+			<li><a href="/">Home</a></li>
+			<li><a href="/suggestion">Suggestions</a></li>
+			<li><a href="/insertion" aria-current="page">Add investigation</a></li>
+		</ul>
+	</nav>
+
+	<main id="main">
+		<section id="formView">
+			<header class="page-head">
+				<h1>Add an investigation</h1>
+				<p>Upload a study's data and documents and describe what it covers. Before its experiments appear in
+					suggestions, the team reviews the extracted variables and units.</p>
+			</header>
+
+			<form id="investigationForm" action="/api/investigations" method="post" enctype="multipart/form-data" novalidate>
+				<div class="layout">
+
+					<section class="panel" aria-labelledby="h-desc">
+						<h2 id="h-desc">About the study</h2>
+						<p class="panel-intro">This information is shown next to each of its experiments in suggestions.</p>
+
+						<div class="field" data-field="title">
+							<label for="title">Title</label>
+							<input type="text" id="title" name="title" maxlength="200" autocomplete="off"
+								placeholder="e.g. Cool Flames Investigation with Gases (CFI-G)" required>
+							<p class="error-text" id="title-error">Enter a title of at least 5 characters.</p>
+						</div>
+
+						<div class="field-row">
+							<div class="field" data-field="investigation_id">
+								<label for="investigation_id">PSI ID <span class="optional">(optional)</span></label>
+								<input type="text" id="investigation_id" name="investigation_id" placeholder="PSI-160"
+									autocomplete="off">
+								<p class="error-text">Use the format PSI-number, for example PSI-160.</p>
+							</div>
+							<div class="field" data-field="gravity_environment">
+								<label for="gravity_environment">Environment <span class="optional">(optional)</span></label>
+								<select id="gravity_environment" name="gravity_environment">
+									<option value="">Not specified</option>
+									<option value="microgravity_iss">Microgravity (ISS)</option>
+									<option value="normal_gravity_lab">Ground laboratory</option>
+									<option value="simulated_microgravity">Numerical simulation</option>
+								</select>
+							</div>
+						</div>
+
+						<div class="field" data-field="description">
+							<label for="description">Description <span class="counter" id="descCounter">0 / 4000</span></label>
+							<textarea id="description" name="description" maxlength="4000" required
+								placeholder="Objective, experimental setup, fuels, and the ranges of conditions studied."></textarea>
+							<p class="error-text">The description needs at least 30 characters.</p>
+						</div>
+
+						<div class="field" data-field="keywords">
+							<span class="label" id="kw-label">Keywords</span>
+							<div class="chip-input" id="chipInput">
+								<input type="text" id="keywordInput" aria-labelledby="kw-label" aria-describedby="kw-hint"
+									placeholder="cool flames, n-butane, microgravity">
+							</div>
+							<p class="hint" id="kw-hint">Press Enter or comma to add each one. Up to 15.</p>
+							<p class="error-text">Add at least one keyword.</p>
+						</div>
+
+						<div class="field" data-field="doi">
+							<label for="doi">Publication DOI or link <span class="optional">(optional)</span></label>
+							<input type="text" id="doi" name="doi" placeholder="10.1016/j.combustflame.2023.112345"
+								autocomplete="off">
+							<p class="error-text">Enter a DOI (starts with 10.) or an https link.</p>
+						</div>
+					</section>
+
+					<section class="panel" aria-labelledby="h-docs">
+						<h2 id="h-docs">Documents</h2>
+						<p class="panel-intro">Data tables, reports, papers and metadata. Tell us what each file is.</p>
+
+						<div class="chamber" id="chamber">
+							<svg viewBox="0 0 200 200" aria-hidden="true" focusable="false">
+								<circle class="shell s5" cx="100" cy="100" r="92" />
+								<circle class="shell s4" cx="100" cy="100" r="76" />
+								<circle class="shell s3" cx="100" cy="100" r="61" />
+								<circle class="shell s2" cx="100" cy="100" r="47" />
+								<circle class="shell s1" cx="100" cy="100" r="34" />
+								<circle class="core" cx="100" cy="100" r="26" />
+								<circle class="burner" cx="100" cy="100" r="12" />
+								<line x1="100" y1="112" x2="100" y2="200" stroke="#334155" stroke-width="3" />
+							</svg>
+							<p class="chamber-title" id="chamberTitle">Drop your files here</p>
+							<p class="chamber-sub">CSV, Excel, PDF, TXT, ZIP or JSON. Up to 50 MB per file.</p>
+							<label class="btn btn-ghost" for="fileInput">Choose files</label>
+							<input type="file" id="fileInput" class="sr-only" multiple accept=".csv,.xlsx,.xls,.pdf,.txt,.zip,.json">
+						</div>
+
+						<ul class="file-list" id="fileList" aria-live="polite"></ul>
+						<p class="file-errors" id="fileErrors" role="alert"></p>
+					</section>
+				</div>
+
+				<div class="submit-bar" id="submitBar">
+					<div class="submit-inner">
+						<p class="summary" id="summary">No documents</p>
+						<button type="submit" class="btn btn-primary" id="submitBtn">Submit investigation</button>
+						<div class="progress" aria-hidden="true"><span id="progressFill"></span></div>
+						<p class="form-message" id="formMessage" role="alert"></p>
+					</div>
+				</div>
+			</form>
+		</section>
+
+		<section id="doneView" class="done" hidden tabindex="-1">
+			<div class="tick" aria-hidden="true">✓</div>
+			<h2>Investigation submitted</h2>
+			<p>Your files are saved. The team will review the extracted variables and units before the experiments appear in
+				suggestions.</p>
+			<dl id="doneDetails"></dl>
+			<button type="button" class="btn btn-ghost" id="againBtn">Add another investigation</button>
+		</section>
+	</main>
+
+	<script src="{{ url_for('static', filename='js/insertion.js') }}" defer></script>
+</body>
+
+</html>

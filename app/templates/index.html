@@ -1,11 +1,96 @@
 <!DOCTYPE html>
-<html>
-	<head>
-	</head>
-	<body>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Dashboard | PSI Scientific Advisor</title>
+	<meta name="description"
+		content="Microgravity combustion experiments from NASA PSI, mapped against crew atmospheres for Moon and Mars fire safety. NASA Space Apps 2026: Flame in Freefall.">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap"
+		rel="stylesheet">
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+	<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+	<script src="{{ url_for('static', filename='js/index.js') }}" defer></script>
+</head>
+
+<body class="dashboard">
+
+	<nav class="site-nav" aria-label="Main">
+		<a class="brand" href="/">PSI Scientific Advisor</a>
 		<ul>
-			<li><a href="/" class="active">Home</a></li>
-			
+			<li><a href="/" aria-current="page">Home</a></li>
+			<li><a href="/suggestion">Suggestions</a></li>
+			<li><a href="/insertion">Add investigation</a></li>
 		</ul>
-	</body>
+	</nav>
+
+	<main id="main" class="dash">
+		<header class="dash-head">
+			<div class="dash-head-text">
+				<h1>Microgravity flame data for Moon and Mars fire safety</h1>
+				<p id="headline">NASA combustion experiments, placed against the atmospheres crews will breathe.</p>
+			</div>
+			<a class="btn btn-primary" href="/suggestion">Find comparable experiments</a>
+		</header>
+
+		<p class="dash-note" id="sourceNote" hidden></p>
+
+		<section class="dash-grid dash-grid--hero" aria-labelledby="h-map">
+			<div class="panel">
+				<h2 id="h-map">Where the tests sit</h2>
+				<div id="atmosphereMap" class="chart chart--map" role="img"
+					aria-label="Scatter plot of ambient oxygen percentage against pressure for each experiment, with crew atmospheres marked.">
+				</div>
+				<details class="table-view">
+					<summary>View as table</summary>
+					<div class="table-scroll" id="mapTable"></div>
+				</details>
+			</div>
+
+			<aside class="panel mission-panel" aria-labelledby="h-mission">
+				<h2 id="h-mission">Check a crew atmosphere</h2>
+				<div class="field">
+					<label for="missionSelect" class="sr-only">Atmosphere</label>
+					<select id="missionSelect">
+						<option value="exploration">Exploration (56.5 kPa, 34% O₂)</option>
+						<option value="iss">ISS cabin (101.3 kPa, 21% O₂)</option>
+						<option value="custom">Custom</option>
+					</select>
+				</div>
+				<div class="field-row" id="customFields" hidden>
+					<div class="field">
+						<label for="customP">Pressure (kPa)</label>
+						<input type="text" id="customP" inputmode="decimal" value="70">
+					</div>
+					<div class="field">
+						<label for="customO2">O₂ (%)</label>
+						<input type="text" id="customO2" inputmode="decimal" value="30">
+					</div>
+				</div>
+				<div class="mission-result" id="missionResult" aria-live="polite"></div>
+			</aside>
+		</section>
+
+		<section class="dash-grid" aria-label="Studies and findings">
+			<div class="panel">
+				<h2>Studies</h2>
+				<ul class="study-list" id="studyList"></ul>
+			</div>
+			<div class="panel">
+				<h2>Key findings</h2>
+				<ul class="finding-list" id="findingList"></ul>
+			</div>
+		</section>
+	</main>
+
+	<footer class="site-foot">
+		<p>NASA Space Apps Challenge 2026: Flame in Freefall. Data from NASA Physical Sciences Informatics. Results describe
+			tested conditions, not safety certifications.</p>
+	</footer>
+
+</body>
+
 </html>
