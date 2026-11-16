@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local configuration (copy config.env.example instead)
+config.env
+
+# Generated vector cache (rebuild with: python -m motor_psi.indexar --mongo)
+indice_embeddings/
+
+# Model weights and large media (download with ollama pull / from NASA PSI)
+*.gguf
+*.ts
+*.mp4
+*.zip
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
