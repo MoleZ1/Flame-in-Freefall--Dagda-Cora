@@ -584,25 +584,17 @@ Checklist:
 
 - **In the product:** two open models run locally through Ollama. Qwen3-Embedding-0.6B handles semantic search and Qwen3.5-9B writes text. Every generated sentence is checked against database facts before it is shown, and risk alerts come from a fixed rule.
 - **In development:** the team used Claude (Anthropic), an AI assistant, to help write and debug parts of the code (Flask APIs, the `motor_psi` engine, front-end JavaScript and CSS), this documentation and the presentation. The team designed the system, chose and prepared the NASA data, and tested the application.
-- **Images:** illustrations in the presentation are AI-generated and labeled as such.
-- **Branding:** no AI-generated content uses NASA logos or branding.
 
 ---
 
 ## 15. Team
 
-**Dagda-Cora**, NASA Space Apps Challenge 2026, `[local event, city, country]`
-
-| Name | Role |
-| --- | --- |
-| `[name]` | `[role]` |
-| `[name]` | `[role]` |
+**Dagda-Cora**, NASA Space Apps Challenge 2026, `Monterrey, Mexico`
 
 ---
 
 ## 16. License
 
-- **Code:** `[choose a license, e.g. MIT, and add a LICENSE file]`.
 - **NASA data:** from NASA Physical Sciences Informatics; see each investigation's page for terms.
 - **Models:** Qwen models are distributed under their own licenses; see each model card.
 
